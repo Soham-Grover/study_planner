@@ -1,13 +1,7 @@
+from login_onboarding import login_onboarding
 import streamlit as st
 
-if "login" not in st.session_state:
-    st.session_state["login"] = 0
+st.set_page_config(initial_sidebar_state="collapsed")
 
-st.header("Welcome to Study Planner - Let's Personalize your experience first!!!")
-
-if st.session_state["login"] == 0:
-
-    st.subheader("Login")
-
-    username = st.text_input("Username")
-    password = 
+if __name__ ==  "__main__":
+    login_onboarding()
