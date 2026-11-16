@@ -5,34 +5,59 @@ from agents.info_extractor_agent import *
 from agents.planner_agent import day_wise_plan_chain
 import datetime
 from datetime import date
+import time
+import json
+import pydantic
+from database import save_exam_plan, get_exam_plan
 
-if "user" not in st.session_state or not st.session_state.user["logged_in"] or not st.session_state.user["onboarding"]:
+from database import save_exam_plan
+
+if "user" not in st.session_state or not st.session_state.user["logged_in"]:
     st.warning("Login on the Home page first.")
+
+if "chapters_done" not in st.session_state:
+    st.session_state["chapters_done"] = 0
 
 
 else:
 
-    if "day_wise_plan" not in st.session_state:
-        st.session_state["day_wise_plan"] = None
+    user_id = st.session_state.user["user_id"]
 
-    if "plan_generated" not in st.session_state:
-        st.session_state["plan_generated"] = False
+    if st.session_state.get("plan_loaded_user") != user_id:
+        saved_plan = get_exam_plan(user_id)
+        if saved_plan:
+            st.session_state["subject_list"] = saved_plan["subject_list"]
+            st.session_state["chapter_list"] = saved_plan["chapter_list"]
+            st.session_state["exam_dates"] = saved_plan["exam_dates"]
+            st.session_state["exam_dates_subjects_ordered"] = saved_plan["exam_dates_subjects_ordered"]
+            st.session_state["day_wise_plan"] = saved_plan["day_wise_plan"]
+            st.session_state["plan_generated"] = True
+        else:
+            st.session_state["day_wise_plan"] = None
+            st.session_state["plan_generated"] = False
+
+        st.session_state["plan_loaded_user"] = user_id
 
     if not st.session_state["plan_generated"]:
 
         st.title(f"Let's crush that exam, {st.session_state.user["username"]}!!")
         st.space()
         # Uploading File
-        uploaded_file = st.file_uploader("Upload Syllabus and Date Sheet for Your Upcoming Examination")
 
-        # Extracting Raw Data from File
-        if uploaded_file is not None:
-            reader = PdfReader(uploaded_file)
+        uploaded_files = st.file_uploader(
+            "Upload Syllabus and Date Sheet for Your Upcoming Examination",
+            accept_multiple_files=True,
+            type=["pdf"]
+        )
 
-            syllabus_datesheet = ""
+        syllabus_datesheet = ""
 
-            for page in reader.pages:
-                syllabus_datesheet += page.extract_text() + "\n"
+        # Extracting Raw Data from Multiple Files
+        if uploaded_files:
+            for file in uploaded_files:
+                reader = PdfReader(file)
+                for page in reader.pages:
+                    syllabus_datesheet += page.extract_text() + "\n"
 
         strengths = st.multiselect("What subjects are your strongest?", st.session_state.user["subjects"])
         views_on_syllabus = st.text_area("What does your overall preparation seem to you?")
@@ -41,12 +66,12 @@ else:
 
         if extract_data_button:
             info_extracted = info_extractor_chain.invoke(input={"name": st.session_state.user["username"],
-                                               "grade": st.session_state.user["grade"],
-                                               "subjects": st.session_state.user["subjects"],
-                                               "strengths": strengths,
-                                                "board": st.session_state.user["board"],
-                                               "views_on_syllabus": views_on_syllabus,"syllabus_datesheet_text": syllabus_datesheet})
-
+                                                                "grade": st.session_state.user["grade"],
+                                                                "subjects": st.session_state.user["subjects"],
+                                                                "strengths": strengths,
+                                                                "board": st.session_state.user["board"],
+                                                                "views_on_syllabus": views_on_syllabus,
+                                                                "syllabus_datesheet_text": syllabus_datesheet})
 
             subject_list = []
             chapter_list = []
@@ -54,8 +79,6 @@ else:
             for item in info_extracted.chapter_list:
                 subject_list.append(item.subject_name)
                 chapter_list.append(item.chapters)
-
-            
 
             exam_dates = []
             exam_dates_subject_ordered = []
@@ -71,15 +94,27 @@ else:
 
             st.session_state["plan_generated"] = True
 
+            with st.status("Generating Your Study Plan...."):
+                day_wise_plan = day_wise_plan_chain.invoke(input={"today_date": date.today(),
+                                                                  "chapter_list": st.session_state["chapter_list"],
+                                                                  "date_sheet": st.session_state[
+                                                                      "exam_dates_subjects_ordered"],
+                                                                  "hours": st.session_state.user["study_hours"],
+                                                                  "strengths": strengths,
+                                                                  "views_on_syllabus": views_on_syllabus})
+                st.write("Fetching Syllabus.....")
+                time.sleep(2)
+                st.write("Fetching Datesheet...")
 
-            day_wise_plan = day_wise_plan_chain.invoke(input={"today_date": date.today(),
-                                                              "chapter_list": st.session_state["chapter_list"],
-                                                              "date_sheet": st.session_state["exam_dates_subjects_ordered"],
-                                                              "hours": st.session_state.user["study_hours"],
-                                                              "strengths": strengths,
-                                                              "views_on_syllabus": views_on_syllabus})
-
-            st.session_state["day_wise_plan"] = day_wise_plan
+            st.session_state["day_wise_plan"] = day_wise_plan.model_dump()
+            save_exam_plan(
+                user_id=user_id,
+                subject_list=subject_list,
+                chapter_list=chapter_list,
+                exam_dates=exam_dates,
+                exam_dates_subjects=exam_dates_subject_ordered,
+                day_wise_plan=st.session_state["day_wise_plan"]
+            )
 
             for item in day_wise_plan:
                 print(item)
@@ -100,49 +135,62 @@ else:
 
             st.subheader("Day Wise Plan")
 
-            for day_plan in st.session_state["day_wise_plan"].daily_schedule:
-                st.markdown(f"### 🗓️ {day_plan.date}")
-                task_cols = st.columns(len(day_plan.tasks), width=1000)
+            for day_plan in st.session_state["day_wise_plan"]["daily_schedule"]:
+                with st.expander(day_plan["date"]):
+                    st.markdown(f"### 🗓️ {day_plan["date"]}")
+                    task_cols = st.columns(len(day_plan["tasks"]), width=1000)
 
-                for i, task in enumerate(day_plan.tasks):
+                for i, task in enumerate(day_plan["tasks"]):
                     with task_cols[i]:
                         with st.container(border=True):
-                            st.write(f"**{task.subject}**")
-                            st.caption(f"📖 {task.chapter}")
-                            st.write(task.task_description)
-
-                st.divider()  # Adds a clean line between days
+                            st.write(f"**{task["subject"]}**")
+                            st.caption(f"📖 {task["chapter"]}")
+                            st.write(task["task_description"])
 
 
         with metrics:
+
+
             exam_date_obj = datetime.datetime.strptime(
                 st.session_state["exam_dates"][0], "%d/%m/%y"
             ).date()
 
             days_to_exam = (exam_date_obj - date.today()).days
 
-            metric_col1, metric_col2, metric_col3= st.columns(3)
+            st.session_state["chapters_done"] = sum(
+                1
+                for subject in st.session_state["chapter_list"]
+                for chapter in subject
+                if st.session_state.get(f"{subject}_{chapter}", False)
+            )
+
+            metric_col1, metric_col2= st.columns(2, width=350)
 
             metric_col1.metric("Days to Exam", days_to_exam, icon="🚨", border=True, width="content")
-            # metric_col2.metric("Tasks Done")
-            # metric_col3.metric("Chapters Completed")
+            metric_col2.metric("Chapters Done", st.session_state["chapters_done"], border=True, width="content", icon="📚")
 
             chapter_col, date_col = st.columns(2)
+
             with chapter_col:
                 st.subheader("Chapters")
                 for i, subject in enumerate(st.session_state["chapter_list"]):
                     with st.container(border=True):
-                        st.subheader(st.session_state["subject_list"][i])
+                        st.subheader(f"🔖 {st.session_state["subject_list"][i]}")
                         for chapter in subject:
                             with st.container(width=1000):
                                 col1, col2 = st.columns(2, gap="xxsmall")
                                 with col1:
                                     st.text(chapter)
                                 with col2:
-                                    chapter_check = st.checkbox("Done", key=chapter)
+                                    chapter_check = st.checkbox("Done", key=f"{subject}_{chapter}")
 
+            with date_col:
+                st.subheader("Exam Schedule")
 
-
+                for i, subject_name_date in enumerate(st.session_state["exam_dates_subjects_ordered"]):
+                    with st.container(border=True):
+                        st.badge(f"📝 {st.session_state["exam_dates_subjects_ordered"][i]}")
+                        st.subheader(f"🗓️ {st.session_state["exam_dates"][i]}")
 
 
 

@@ -1,5 +1,6 @@
 import sqlite3
 import hashlib
+import json
 
 def get_connection():
     conn = sqlite3.connect("study_planner.db")
@@ -21,6 +22,21 @@ def create_users_table():
     conn.commit()
     conn.close()
 
+def create_student_profile_table():
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS student_profiles (
+    user_id INTEGER,
+    grade INTEGER,
+    board TEXT,
+    subjects TEXT,
+    productive_time INTEGER,
+    study_hours INTEGER)""")
+
+    conn.commit()
+    conn.close()
 
 def create_task_table():
     conn = get_connection()
@@ -37,6 +53,22 @@ def create_task_table():
     FOREIGN KEY(user_id) REFERENCES users(user_id)
     )""")
 
+    conn.commit()
+    conn.close()
+
+def create_exam_plans_table():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS exam_plans (
+        user_id INTEGER PRIMARY KEY,
+        subject_list TEXT,
+        chapter_list TEXT,
+        exam_dates TEXT,
+        exam_dates_subjects TEXT,
+        day_wise_plan TEXT,
+        FOREIGN KEY(user_id) REFERENCES users(user_id)
+    )""")
     conn.commit()
     conn.close()
 
@@ -106,6 +138,74 @@ def get_quests(user_id):
     conn.close()
     return quests
 
+def add_student_profile(user_id, grade, board, subjects, productive_time, study_hours):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO student_profiles (user_id, grade, board, subjects, productive_time, study_hours) VALUES (?, ?, ?, ?, ?, ?)", (user_id, grade, board, json.dumps(subjects), json.dumps(productive_time), study_hours))
+    conn.commit()
+    conn.close()
+
+def get_student_profile(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT grade, board, subjects, productive_time, study_hours FROM student_profiles WHERE user_id = ?",
+                   (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {
+            "grade": row[0],
+            "board": row[1],
+            "subjects": json.loads(row[2]),
+            "productive_time": json.loads(row[3]),
+            "study_hours": row[4]
+        }
+    return None
+
+
+def save_exam_plan(user_id, subject_list, chapter_list, exam_dates, exam_dates_subjects, day_wise_plan):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Convert Pydantic object to a JSON-serializable dictionary
+    plan_dict = day_wise_plan.model_dump() if hasattr(day_wise_plan, "model_dump") else day_wise_plan
+
+    cursor.execute(
+        """INSERT OR REPLACE INTO exam_plans 
+           (user_id, subject_list, chapter_list, exam_dates, exam_dates_subjects, day_wise_plan) 
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (
+            user_id,
+            json.dumps(subject_list),
+            json.dumps(chapter_list),
+            json.dumps(exam_dates),
+            json.dumps(exam_dates_subjects),
+            json.dumps(plan_dict)
+        )
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_exam_plan(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT subject_list, chapter_list, exam_dates, exam_dates_subjects, day_wise_plan FROM exam_plans WHERE user_id = ?",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+
+    if row:
+        return {
+            "subject_list": json.loads(row[0]),
+            "chapter_list": json.loads(row[1]),
+            "exam_dates": json.loads(row[2]),
+            "exam_dates_subjects_ordered": json.loads(row[3]),
+            "day_wise_plan": json.loads(row[4])
+        }
+    return None
 
 
 if __name__ == "__main__":
@@ -113,3 +213,7 @@ if __name__ == "__main__":
     print("Users Table created successfully")
     create_task_table()
     print("Tasks Table created Successfully")
+    create_student_profile_table()
+    print("Create Student Profile Table Successful")
+    create_exam_plans_table()
+    print("Plans Table Successful")

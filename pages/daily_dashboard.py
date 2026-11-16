@@ -16,12 +16,17 @@ st.set_page_config(
     layout="wide",
 )
 
-# Initialize session state
-if "task_ids" not in st.session_state:
+if st.session_state.get("loaded_user_id") != user_id:
+
+    # 1. Clear out any old task keys from the previous user
+    if "task_ids" in st.session_state:
+        for old_tid in st.session_state.task_ids:
+            for prefix in ["name_", "priority_", "due_", "done_"]:
+                st.session_state.pop(f"{prefix}{old_tid}", None)
+
+    # 2. Reset task_ids and fetch fresh tasks for the current user
     st.session_state.task_ids = []
-
     db_tasks = get_quests(user_id)
-
 
     for quest in db_tasks:
         tid, name, priority, due, is_done = quest
@@ -31,7 +36,8 @@ if "task_ids" not in st.session_state:
         st.session_state[f"due_{tid}"] = due
         st.session_state[f"done_{tid}"] = bool(is_done)
 
-    st.session_state.tasks_loaded = True
+    # 3. Record which user's data is now loaded in memory
+    st.session_state.loaded_user_id = user_id
     st.session_state.new_task = ""
 
 # Function to add a task
