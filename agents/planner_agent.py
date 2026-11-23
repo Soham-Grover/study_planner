@@ -35,7 +35,9 @@ Inputs:
 IMPORTANT POINT TO TAKE CARE OF:
 1. Make the plan so that all the topics of the chapters are spaced properly in the given time frame and the plan must contain exactly the number of days from today to the date of the first exam.
 2. For each day, there can be a maximum of 4 tasks
-3. Once all chapters are covered, you schedule test and revision times."""
+3. Once all chapters are covered, you schedule test and revision times.
+4. Make sure that there is ample revision time for the student
+5. The student will revise the first exam's syllabus one day before the exams start. He/She will not revise anything else.x"""
 
 day_wise_plan_prompt_template = PromptTemplate(input_variables=["today_date","chapter_list", "date_sheet", "hours", "strengths", "views_on_syllabus"], template=day_wise_plan_prompt)
 

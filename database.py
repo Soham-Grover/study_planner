@@ -208,6 +208,52 @@ def get_exam_plan(user_id):
     return None
 
 
+def change_users_table():
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""ALTER TABLE users ADD COLUMN xp INTEGER DEFAULT 0""")
+    except sqlite3.OperationalError:
+        pass
+
+    conn.commit()
+    conn.close()
+
+def update_xp_tasks_table():
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("DROP TRIGGER IF EXISTS update_xp;")
+
+    cursor.execute("""
+            CREATE TRIGGER update_xp
+            AFTER UPDATE OF is_done ON tasks
+            FOR EACH ROW
+            BEGIN
+                UPDATE users
+                SET xp = MAX(0, COALESCE(xp, 0) + CASE
+                    WHEN OLD.is_done = 0 AND NEW.is_done = 1 THEN 20
+                    WHEN OLD.is_done = 1 AND NEW.is_done = 0 THEN -20
+                    ELSE 0
+                END)
+                WHERE user_id = NEW.user_id;
+            END;
+        """)
+
+    conn.commit()
+    conn.close()
+
+
+def get_xp(userid):
+    conn = get_connection()
+    cursor = conn.cursor()
+    xp = cursor.execute("SELECT xp from users WHERE user_id = ?", userid)
+    conn.commit()
+    conn.close()
+
+    return xp
+
+
 if __name__ == "__main__":
     create_users_table()
     print("Users Table created successfully")
@@ -217,3 +263,7 @@ if __name__ == "__main__":
     print("Create Student Profile Table Successful")
     create_exam_plans_table()
     print("Plans Table Successful")
+    change_users_table()
+    print("Tasks changed")
+    update_xp_tasks_table()
+    print("Trigger ADDED")

@@ -12,101 +12,6 @@ if "user" not in st.session_state or not st.session_state.user.get("logged_in"):
 
 user_id = st.session_state.user["user_id"]
 
-DATA_FILE = Path(__file__).parent.parent / "productivity_data.json"
-
-
-def empty_productivity_data():
-    return {
-        "xp": 0,
-        "awarded_task_ids": [],
-        "five_task_bonus_days": [],
-        "all_tasks_bonus_days": [],
-        "perfect_days": [],
-        "daily_stats": {},
-        "xp_sources": {"Task XP": 0, "Daily bonuses": 0, "Focus sessions": 0},
-    }
-
-
-def load_productivity_data():
-    if DATA_FILE.exists():
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                saved = json.load(f)
-            defaults = empty_productivity_data()
-            defaults.update(saved)
-            saved_sources = saved.get("xp_sources", {})
-            defaults["xp_sources"] = {
-                k: saved_sources.get(k, v) for k, v in defaults["xp_sources"].items()
-            }
-            return defaults
-        except (json.JSONDecodeError, OSError, TypeError):
-            pass
-    return empty_productivity_data()
-
-
-def save_productivity_data():
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(st.session_state.productivity_data, f, indent=4)
-
-
-if "productivity_data" not in st.session_state:
-    st.session_state.productivity_data = load_productivity_data()
-
-
-def get_today_stats():
-    data = st.session_state.productivity_data
-    key = date.today().isoformat()
-    if key not in data["daily_stats"]:
-        data["daily_stats"][key] = {"tasks": 0, "focus_sessions": 0, "study_minutes": 0, "xp": 0}
-    return data["daily_stats"][key]
-
-
-def add_xp(points, source):
-    data = st.session_state.productivity_data
-    data["xp"] += points
-    data["xp_sources"][source] += points
-    get_today_stats()["xp"] += points
-    save_productivity_data()
-
-
-def award_task_xp(task_id):
-    data = st.session_state.productivity_data
-    tid_str = str(task_id)
-    if tid_str in data["awarded_task_ids"]:
-        return
-
-    priority_points = {"Low": 5, "Moderate": 10, "High": 20}
-    priority = st.session_state.get(f"priority_{task_id}", "Moderate")
-    points = priority_points.get(priority, 10)
-
-    data["awarded_task_ids"].append(tid_str)
-    get_today_stats()["tasks"] += 1
-    add_xp(points, "Task XP")
-
-    day = date.today().isoformat()
-    if get_today_stats()["tasks"] >= 5 and day not in data["five_task_bonus_days"]:
-        data["five_task_bonus_days"].append(day)
-        add_xp(15, "Daily bonuses")
-        st.toast("5 tasks completed! +15 bonus XP 🎉", icon="⭐")
-
-
-def award_all_tasks_bonus():
-    data = st.session_state.productivity_data
-    day = date.today().isoformat()
-    if day not in data["all_tasks_bonus_days"]:
-        data["all_tasks_bonus_days"].append(day)
-        data["perfect_days"].append(day)
-        add_xp(20, "Daily bonuses")
-        st.toast("All your tasks are complete! +20 bonus XP 🎉", icon="🏆")
-
-
-def record_focus_session():
-    stats = get_today_stats()
-    stats["focus_sessions"] += 1
-    stats["study_minutes"] += int(st.session_state.get("study_minutes", 0))
-    add_xp(10, "Focus sessions")
-    st.toast("Focus session completed! +10 XP 🎯", icon="⏱️")
-
 
 db_tasks = get_quests(user_id)
 st.session_state.task_ids = []
@@ -140,13 +45,47 @@ def delete_task(tid):
 
 
 def sync_task(tid):
-    name = st.session_state[f"name_{tid}"]
-    priority = st.session_state[f"priority_{tid}"]
-    due = st.session_state[f"due_{tid}"]
-    is_done = st.session_state[f"done_{tid}"]
+    name = st.session_state.get(f"name_{tid}")
+    is_done = st.session_state.get(f"done_{tid}", False)
+    priority = st.session_state.get(f"priority_{tid}")
+    due = st.session_state.get(f"due_{tid}")
     update_quest(tid, name, priority, due, 1 if is_done else 0)
+
     if is_done:
         award_task_xp(tid)
+
+
+def start_timer():
+    minutes = st.session_state.study_minutes
+    st.session_state.study_remaining = minutes * 60
+    st.session_state.phase = "Study"
+    st.session_state.phase_seconds = min(minutes * 60, 45 * 60)
+    st.session_state.timer_remaining = st.session_state.phase_seconds
+    st.session_state.timer_end = time.time() + st.session_state.phase_seconds
+    st.session_state.timer_running = True
+
+
+def pause_timer():
+    st.session_state.timer_remaining = max(0, math.ceil(st.session_state.timer_end - time.time()))
+    st.session_state.timer_running = False
+
+
+def resume_timer():
+    st.session_state.timer_end = time.time() + st.session_state.timer_remaining
+    st.session_state.timer_running = True
+
+
+def reset_timer():
+    st.session_state.timer_running = False
+    st.session_state.study_remaining = 0
+    st.session_state.timer_remaining = 0
+    st.session_state.phase = "Not Started"
+    st.session_state.phase_seconds = 0
+    st.session_state.timer_end = 0
+
+
+if "timer_running" not in st.session_state:
+    reset_timer()
 
 
 left, right = st.columns([7, 3], gap="large")
@@ -243,41 +182,9 @@ with right:
         if percentage == 100 and total > 0:
             st.balloons()
 
-# ---------------- FOCUS TIMER ----------------
-def start_timer():
-    minutes = st.session_state.study_minutes
-    st.session_state.study_remaining = minutes * 60
-    st.session_state.phase = "Study"
-    st.session_state.phase_seconds = min(minutes * 60, 45 * 60)
-    st.session_state.timer_remaining = st.session_state.phase_seconds
-    st.session_state.timer_end = time.time() + st.session_state.phase_seconds
-    st.session_state.timer_running = True
-
-
-def pause_timer():
-    st.session_state.timer_remaining = max(0, math.ceil(st.session_state.timer_end - time.time()))
-    st.session_state.timer_running = False
-
-
-def resume_timer():
-    st.session_state.timer_end = time.time() + st.session_state.timer_remaining
-    st.session_state.timer_running = True
-
-
-def reset_timer():
-    st.session_state.timer_running = False
-    st.session_state.study_remaining = 0
-    st.session_state.timer_remaining = 0
-    st.session_state.phase = "Not Started"
-    st.session_state.phase_seconds = 0
-    st.session_state.timer_end = 0
-
-
-if "timer_running" not in st.session_state:
-    reset_timer()
-
-_, right_timer = st.columns([7, 3], gap="large")
-with right_timer:
+    # ---------------- FOCUS TIMER ----------------
+    #_, right_timer = st.columns([7, 3], gap="large")
+    #with right_timer:
     with st.container(border=True):
         st.subheader("Focus Timer")
 

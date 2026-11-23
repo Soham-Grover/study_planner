@@ -32,7 +32,7 @@ if st.session_state.get("plan_loaded_user") != user_id:
         st.session_state["exam_dates_subjects_ordered"] = saved_plan["exam_dates_subjects_ordered"]
         st.session_state["day_wise_plan"] = saved_plan["day_wise_plan"]
         st.session_state["plan_generated"] = True
-    else:   
+    else:
         st.session_state["day_wise_plan"] = None
         st.session_state["plan_generated"] = False
 
@@ -98,7 +98,7 @@ if not st.session_state["plan_generated"]:
             day_wise_plan = day_wise_plan_chain.invoke(input={"today_date": date.today(),
                                                               "chapter_list": st.session_state["chapter_list"],
                                                               "date_sheet": st.session_state[
-                                                                  "exam_dates_subjects_ordered"],
+                                                                  "exam_dates"],
                                                               "hours": st.session_state.user["study_hours"],
                                                               "strengths": strengths,
                                                               "views_on_syllabus": views_on_syllabus})
@@ -149,6 +149,19 @@ else:
 
 
     with metrics:
+
+        if "subject_list" in st.session_state and "chapter_list" in st.session_state:
+            cols = st.columns(len(st.session_state["subject_list"]))
+            for i, (subj_name, chapters) in enumerate(zip(st.session_state["subject_list"], st.session_state["chapter_list"])):
+
+                done = sum(1 for ch in chapters if st.session_state.get(f"{chapters}_{ch}", False))
+                pct = int((done / len(chapters)) * 100) if chapters else 0
+                cols[i].metric(
+                    label=subj_name,
+                    value=f"{done}/{len(chapters)}",
+                    delta=f"{pct}% done",
+                    border=True
+                )
 
 
         exam_date_obj = datetime.datetime.strptime(
