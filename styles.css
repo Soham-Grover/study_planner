@@ -1,0 +1,51 @@
+/* ==============================
+   FONTS & GLOBAL VARIABLES
+================================ */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap');
+
+:root {
+    --bg-obsidian: #05070e;
+    --glass-bg: rgba(15, 23, 42, 0.52);
+    --glass-border: rgba(148, 163, 184, 0.16);
+    --accent-indigo: #6366f1;
+    --accent-violet: #a855f7;
+    --accent-cyan: #38bdf8;
+    --text-primary: #f8fafc;
+    --text-muted: #94a3b8;
+}
+
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+    color: var(--text-primary);
+}
+
+/* ==============================
+   ANIMATED AURORA & CYBER GRID
+================================ */
+@keyframes auroraShift {
+    0% {
+        background-position: 0% 50%, 100% 0%, 50% 100%, 0 0, 0 0;
+    }
+    50% {
+        background-position: 100% 50%, 0% 100%, 50% 0%, 0 0, 0 0;
+    }
+    100% {
+        background-position: 0% 50%, 100% 0%, 50% 100%, 0 0, 0 0;
+    }
+}
+
+[data-testid="stAppViewContainer"], .stApp {
+    background-color: var(--bg-obsidian);
+    background-image:
+        radial-gradient(circle at 18% 20%, rgba(99, 102, 241, 0.24) 0%, transparent 45%),
+        radial-gradient(circle at 82% 25%, rgba(168, 85, 247, 0.22) 0%, transparent 45%),
+        radial-gradient(circle at 50% 88%, rgba(56, 189, 248, 0.18) 0%, transparent 50%),
+        linear-gradient(rgba(148, 163, 184, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.035) 1px, transparent 1px);
+    background-size: 160% 160%, 160% 160%, 160% 160%, 44px 44px, 44px 44px;
+    background-attachment: fixed;
+    animation: auroraShift 22s ease-in-out infinite;
+}
+
+/* ==============================
+   FROSTED OBS
