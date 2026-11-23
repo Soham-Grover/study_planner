@@ -1,0 +1,6 @@
+[theme]
+primaryColor = "#6366F1"          # Crisp Indigo accent
+backgroundColor = "#0F172A"       # Deep Slate dark background
+secondaryBackgroundColor = "#1E293B" # Elevated Card / Sidebar background
+textColor = "#F8FAFC"             # Clean off-white text
+font = "sans serif"

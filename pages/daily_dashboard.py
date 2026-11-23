@@ -3,581 +3,558 @@ import time
 import math
 from database import get_quests, update_quest, delete_quest
 from database import add_quest, user_auth
+from pathlib import Path
+from datetime import date, timedelta
+import json
+from database import *
 
+st.set_page_config(layout="wide")
 
 if "user" not in st.session_state or not st.session_state.user.get("logged_in"):
     st.warning("Please log in on the Home page first.")
     st.stop()
 
-user_id = st.session_state.user["user_id"]
+# ---------------- PRODUCTIVITY DATA ----------------
+
+DATA_FILE = Path(__file__).parent.parent / "productivity_data.json"
 
 
-st.set_page_config(
-    layout="wide",
-)
+def empty_productivity_data():
+    return {
+        "xp": 0,
+        "awarded_task_ids": [],
+        "five_task_bonus_days": [],
+        "all_tasks_bonus_days": [],
+        "perfect_days": [],
+        "daily_stats": {},
+        "xp_sources": {
+            "Task XP": 0,
+            "Daily bonuses": 0,
+            "Focus sessions": 0
+        }
+    }
 
-if st.session_state.get("loaded_user_id") != user_id:
 
-    # 1. Clear out any old task keys from the previous user
-    if "task_ids" in st.session_state:
-        for old_tid in st.session_state.task_ids:
-            for prefix in ["name_", "priority_", "due_", "done_"]:
-                st.session_state.pop(f"{prefix}{old_tid}", None)
+def load_productivity_data():
+    if DATA_FILE.exists():
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as file:
+                saved = json.load(file)
 
-    # 2. Reset task_ids and fetch fresh tasks for the current user
-    st.session_state.task_ids = []
-    db_tasks = get_quests(user_id)
+            defaults = empty_productivity_data()
+            defaults.update(saved)
 
-    for quest in db_tasks:
-        tid, name, priority, due, is_done = quest
-        st.session_state.task_ids.append(tid)
-        st.session_state[f"name_{tid}"] = name
-        st.session_state[f"priority_{tid}"] = priority
-        st.session_state[f"due_{tid}"] = due
-        st.session_state[f"done_{tid}"] = bool(is_done)
+            # Safely merge XP sources so older saved files still work.
+            saved_sources = saved.get("xp_sources", {})
+            defaults["xp_sources"] = {
+                key: saved_sources.get(key, value)
+                for key, value in defaults["xp_sources"].items()
+            }
 
-    # 3. Record which user's data is now loaded in memory
-    st.session_state.loaded_user_id = user_id
-    st.session_state.new_task = ""
+            return defaults
 
-# Function to add a task
-def add_task():
-    task = st.session_state.new_task.strip()
+        except (json.JSONDecodeError, OSError, TypeError):
+            return empty_productivity_data()
 
-    if task:
-        new_tid = add_quest(
-            user_id,
-            task,
-            "Moderate",
-            "",
-            0
+    return empty_productivity_data()
+
+
+st.session_state.productivity_data = load_productivity_data()
+
+
+def save_productivity_data():
+    with open(DATA_FILE, "w", encoding="utf-8") as file:
+        json.dump(
+            st.session_state.productivity_data,
+            file,
+            indent=4
         )
 
-        st.session_state.task_ids.append(new_tid)
 
-        st.session_state[f"name_{new_tid}"] = task
-        st.session_state[f"priority_{new_tid}"] = "Moderate"
-        st.session_state[f"due_{new_tid}"] = ""
-        st.session_state[f"done_{new_tid}"] = False
-
-        st.session_state.new_task = ""
+def today_key():
+    return date.today().isoformat()
 
 
-# Function to delete a task
-def delete_task(tid):
-    delete_quest(tid)
-    st.session_state.task_ids.remove(tid)
+def get_today_stats():
+    data = st.session_state.productivity_data
+    key = today_key()
+
+    if key not in data["daily_stats"]:
+        data["daily_stats"][key] = {
+            "tasks": 0,
+            "focus_sessions": 0,
+            "study_minutes": 0,
+            "xp": 0
+        }
+
+    return data["daily_stats"][key]
 
 
-def sync_task(tid):
-    name = st.session_state[f"name_{tid}"]
-    priority = st.session_state[f"priority_{tid}"]
-    due = st.session_state[f"due_{tid}"]
-    done = 1 if st.session_state[f"done_{tid}"] else 0
+# ---------------- XP SYSTEM ----------------
 
-    update_quest(tid, name, priority, due, done)  # Save to DB
-#----------------------*----------------------------
+def add_xp(points, source):
+    data = st.session_state.productivity_data
 
-# Master Tabs
-t1, t2 = st.tabs(["Daily Planner", "Exam Portal"])
+    data["xp"] += points
+    data["xp_sources"][source] += points
+    get_today_stats()["xp"] += points
 
-with t1:
-
-    left, right = st.columns([7,3], gap="large")
-
-    # To Do List
-    with left:
-        with st.container(border=True,key="to_do"):
-
-            # App title
-            st.subheader("Daily To-Do List")
-            st.markdown("Have all your daily quests managed")
+    save_productivity_data()
 
 
-            # Add task section
-            col1, col2 = st.columns([4, 1])
+def award_task_xp(task_id):
+    data = st.session_state.productivity_data
+    task_id = str(task_id)
 
-            with col1:
-                st.text_input(
-                    "Add new quest",
-                    placeholder="what's awaiting you?",
-                    key="new_task"
-                )
+    # A task can award XP only once.
+    if task_id in data["awarded_task_ids"]:
+        return
 
-            with col2:
-                st.write("")
-                st.button("➕ Add Quest", on_click=add_task)
+    priority_points = {
+        "Low": 5,
+        "Moderate": 10,
+        "High": 20
+    }
+
+    priority = st.session_state.get(
+        f"priority_{task_id}",
+        "Moderate"
+    )
+
+    points = priority_points.get(priority, 10)
+
+    data["awarded_task_ids"].append(task_id)
+    get_today_stats()["tasks"] += 1
+
+    add_xp(points, "Task XP")
+
+    # Bonus for completing 5 tasks in one day.
+    day = today_key()
+
+    if (
+            get_today_stats()["tasks"] >= 5
+            and day not in data["five_task_bonus_days"]
+    ):
+        data["five_task_bonus_days"].append(day)
+
+        add_xp(15, "Daily bonuses")
+
+        st.toast(
+            "5 tasks completed! +15 bonus XP 🎉",
+            icon="⭐"
+        )
 
 
-            # Table headings
-            st.divider()
+def award_all_tasks_bonus():
+    data = st.session_state.productivity_data
+    day = today_key()
 
-            col1, col2, col3, col4, col5 = st.columns(
-                [3, 2, 1, 1, 1]
-            )
+    if day not in data["all_tasks_bonus_days"]:
+        data["all_tasks_bonus_days"].append(day)
+        data["perfect_days"].append(day)
 
-            col1.write("**Task**")
-            col2.write("**Priority**")
-            col3.write("**Due**")
-            col4.write("**Done**")
-            col5.write("**Delete**")
+        add_xp(20, "Daily bonuses")
+
+        st.toast(
+            "All your tasks are complete! +20 bonus XP 🎉",
+            icon="🏆"
+        )
 
 
-            # Display every task as a separate row
-            for i in st.session_state.task_ids:
+def record_focus_session():
+    data = st.session_state.productivity_data
+    stats = get_today_stats()
 
-                col1, col2, col3, col4, col5 = st.columns(
-                    [3, 2, 1, 1, 1]
-                )
+    stats["focus_sessions"] += 1
+    stats["study_minutes"] += int(
+        st.session_state.get("study_minutes", 0)
+    )
 
-                with col1:
-                    st.text_input(
-                        "Task",
-                        key=f"name_{i}",
-                        label_visibility="collapsed",
-                        on_change=sync_task, args=(i,)
-                    )
+    add_xp(10, "Focus sessions")
 
-                with col2:
-                    st.select_slider(
-                        "Priority",
-                        options=["Low", "Moderate", "High"],
-                        key=f"priority_{i}",
-                        label_visibility="collapsed",
-                        on_change = sync_task, args = (i,)
-                    )
+    st.toast(
+        "Focus session completed! +10 XP 🎯",
+        icon="⏱️"
+    )
 
-                with col3:
-                    st.text_input(
-                        "Due",
-                        key=f"due_{i}",
-                        placeholder="Due date",
-                        label_visibility="collapsed",
-                        on_change=sync_task, args=(i,)
 
-                    )
+# ---------------- STREAK SYSTEM ----------------
 
-                with col4:
-                    st.checkbox(
-                        "Done",
-                        key=f"done_{i}",
-                        label_visibility="collapsed",
-                        on_change=sync_task, args=(i,)
-                    )
+def productivity_streaks():
+    stats = st.session_state.productivity_data["daily_stats"]
+    productive_days = []
 
-                with col5:
-                    st.button(
-                        "🗑️",
-                        key=f"delete_{i}",
-                        on_click=delete_task,
-                        args=(i,)
-                    )
+    for day, values in stats.items():
+        if (
+                values.get("tasks", 0) >= 3
+                or values.get("focus_sessions", 0) >= 1
+        ):
+            productive_days.append(date.fromisoformat(day))
 
-    # Progress Tracker
-    with right:
-        with st.container(border=True):
+    productive_days = sorted(set(productive_days))
 
-            st.subheader("Progress Tracker")
+    if not productive_days:
+        return 0, 0
 
-            total = len(st.session_state.task_ids)
+    # Best-ever streak
+    best = 1
+    run = 1
 
-            completed = sum(
-                st.session_state[f"done_{i}"]
-                for i in st.session_state.task_ids
-            )
+    for previous, current in zip(
+            productive_days,
+            productive_days[1:]
+    ):
+        if current == previous + timedelta(days=1):
+            run += 1
+        else:
+            run = 1
 
-            percentage = int((completed / total) * 100) if total > 0 else 0
+        best = max(best, run)
 
-            # Different gradient for 100% completion
-            if percentage == 100:
-                ring_gradient = """
-                    conic-gradient(
-                        from -90deg,
-                        #bbf7d0 0%,
-                        #86efac 25%,
-                        #4ade80 50%,
-                        #15803d 75%,
-                        #bbf7d0 100%
-                    )
-                """
+    # Current streak
+    productive_set = set(productive_days)
+
+    if date.today() in productive_set:
+        cursor = date.today()
+    else:
+        cursor = date.today() - timedelta(days=1)
+
+    current = 0
+
+    while cursor in productive_set:
+        current += 1
+        cursor -= timedelta(days=1)
+
+    return current, best
+
+
+# ---------------- LEVEL SYSTEM ----------------
+
+def level_details(xp):
+    levels = [
+        ("Beginner", 0, 100),
+        ("Learner", 100, 300),
+        ("Achiever", 300, 600),
+        ("Expert", 600, 1000),
+        ("Master", 1000, 1500),
+        ("Legend", 1500, None)
+    ]
+
+    for name, start, end in levels:
+
+        if end is None or xp < end:
+
+            if end is None:
+                progress = 100
+                remaining = 0
+
             else:
-                p1 = percentage * 0.35
-                p2 = percentage * 0.70
+                progress = int(
+                    (xp - start) / (end - start) * 100
+                )
+                remaining = end - xp
 
-                ring_gradient = f"""
-                    conic-gradient(
-                        from -90deg,
-                        #bbf7d0 0%,
-                        #86efac {p1}%,
-                        #4ade80 {p2}%,
-                        #15803d {percentage}%,
-                        #e5e7eb {percentage}% 100%
-                    )
-                """
+            return name, progress, remaining, end
 
-            st.html(
-                f"""
-                <div style="
-                    display: flex;
-                    justify-content: center;
-                    margin: 20px auto;
-                ">
-                    <div style="
-                        width: 150px;
-                        height: 150px;
-                        position: relative;
-                    ">
+    return "Legend", 100, 0, None
 
-                        <div style="
-                            width: 150px;
-                            height: 150px;
-                            border-radius: 50%;
-                            background: {ring_gradient};
 
-                            -webkit-mask: radial-gradient(
-                                farthest-side,
-                                transparent 80%,
-                                black 81%
-                            );
+# ---------------- BADGES ----------------
 
-                            mask: radial-gradient(
-                                farthest-side,
-                                transparent 80%,
-                                black 81%
-                            );
-                        "></div>
+def get_badges():
+    data = st.session_state.productivity_data
+    stats = data["daily_stats"]
 
-                        <div style="
-                            position: absolute;
-                            inset: 0;
-                            display: flex;
-                            flex-direction: column;
-                            align-items: center;
-                            justify-content: center;
-                            color: white;
-                        ">
-                            <span style="
-                                font-size: 28px;
-                                font-weight: bold;
-                            ">{percentage}%</span>
+    total_tasks = sum(
+        day.get("tasks", 0)
+        for day in stats.values()
+    )
 
-                            <span style="
-                                font-size: 12px;
-                                opacity: 0.7;
-                            ">Completed</span>
-                        </div>
+    total_focus = sum(
+        day.get("focus_sessions", 0)
+        for day in stats.values()
+    )
 
-                    </div>
-                </div>
-                """
+    current_streak, best_streak = productivity_streaks()
+    xp = data["xp"]
+
+    badge_rules = [
+        (
+            "🌱 First Step",
+            total_tasks >= 1,
+            "Complete your first task"
+        ),
+        (
+            "📚 Task Master",
+            total_tasks >= 10,
+            "Complete 10 tasks"
+        ),
+        (
+            "🔥 Focus Freak",
+            total_focus >= 10,
+            "Complete 10 focus sessions"
+        ),
+        (
+            "⭐ XP Hunter",
+            xp >= 500,
+            "Earn 500 XP"
+        ),
+        (
+            "💎 XP Champion",
+            xp >= 1000,
+            "Earn 1,000 XP"
+        ),
+        (
+            "🔥 Weekly Warrior",
+            best_streak >= 7,
+            "Build a 7-day streak"
+        ),
+        (
+            "👑 Consistency King",
+            best_streak >= 30,
+            "Build a 30-day streak"
+        ),
+        (
+            "🎯 Perfect Day",
+            len(data["perfect_days"]) >= 1,
+            "Complete all tasks in a day"
+        )
+    ]
+
+    return badge_rules
+
+
+# ---------------- CSS ----------------
+
+def load_css(file_name):
+    css_path = Path(__file__).parent.parent / file_name
+
+    if css_path.exists():
+        with open(css_path, "r", encoding="utf-8") as f:
+            st.markdown(
+                f"<style>{f.read()}</style>",
+                unsafe_allow_html=True
+            )
+    else:
+        st.error(f"CSS file '{file_name}' not found.")
+
+
+load_css("styles.css")
+
+
+
+
+# ---------------- MASTER TABS ----------------
+
+# IMPORTANT FIX:
+# st.tabs() returns a list, so unpack the single tab using a comma.
+
+t0, = st.tabs([
+    "📊 Productivity Dashboard"
+])
+
+# ---------------- PRODUCTIVITY DASHBOARD ----------------
+
+with t0:
+    st.title("My Productive Zone")
+
+    st.caption(
+        "Your study progress, XP, streaks and achievements — "
+        "all in one place."
+    )
+
+    data = st.session_state.productivity_data
+
+    today_stats = get_today_stats()
+
+    current_streak, best_streak = productivity_streaks()
+
+    level_name, level_progress, xp_to_next, next_level_xp = (
+        level_details(data["xp"])
+    )
+
+    total_tasks_completed = sum(
+        day.get("tasks", 0)
+        for day in data["daily_stats"].values()
+    )
+
+    total_focus_sessions = sum(
+        day.get("focus_sessions", 0)
+        for day in data["daily_stats"].values()
+    )
+
+    total_study_minutes = sum(
+        day.get("study_minutes", 0)
+        for day in data["daily_stats"].values()
+    )
+
+    earned_badges = sum(
+        1
+        for _, earned, _ in get_badges()
+        if earned
+    )
+
+    # ---------------- SUMMARY CARDS ----------------
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        with st.container(border=True):
+            st.metric("⭐ Total XP", data["xp"])
+
+    with c2:
+        with st.container(border=True):
+            st.metric(
+                "🔥 Current Streak",
+                f"{current_streak} days"
             )
 
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-                st.markdown(f"<h2>{total}</h2>", unsafe_allow_html=True)
-                st.caption("Total")
-
-            with col2:
-                st.markdown(f"<h2>{completed}</h2>", unsafe_allow_html=True)
-                st.caption("Done")
-
-            with col3:
-                st.markdown(f"<h2>{total - completed}</h2>", unsafe_allow_html=True)
-                st.caption("Pending")
-
-            # Celebrate only when progress reaches 100%
-            if percentage == 100:
-                st.balloons()
-
-
-    left, right = st.columns([7, 3], gap="large")
-
-
-    # Focus Timer Functions
-    def start_timer():
-
-        minutes = st.session_state.study_minutes
-
-        st.session_state.study_remaining = minutes * 60
-
-        st.session_state.phase = "Study"
-
-        st.session_state.phase_seconds = min(
-            minutes * 60, 45 * 60
-        )
-
-        st.session_state.timer_remaining = (
-            st.session_state.phase_seconds
-        )
-
-        st.session_state.timer_end = (
-            time.time() + st.session_state.phase_seconds
-        )
-
-        st.session_state.timer_running = True
-
-
-    def pause_timer():
-
-        remaining = max(
-            0,
-            math.ceil(st.session_state.timer_end - time.time())
-        )
-
-        st.session_state.timer_remaining = remaining
-        st.session_state.timer_running = False
-
-
-    def resume_timer():
-
-        st.session_state.timer_end = (
-            time.time() + st.session_state.timer_remaining
-        )
-
-        st.session_state.timer_running = True
-
-
-    def reset_timer():
-
-        st.session_state.timer_running = False
-        st.session_state.study_remaining = 0
-        st.session_state.timer_remaining = 0
-        st.session_state.phase = "Not Started"
-        st.session_state.phase_seconds = 0
-        st.session_state.timer_end = 0
-
-
-    # Initialize timer session state
-
-    if "timer_running" not in st.session_state:
-
-        st.session_state.timer_running = False
-        st.session_state.study_remaining = 0
-        st.session_state.timer_remaining = 0
-        st.session_state.phase = "Not Started"
-        st.session_state.phase_seconds = 0
-        st.session_state.timer_end = 0
-
-    # Focus Timer
-    with right:
+    with c3:
         with st.container(border=True):
+            st.metric(
+                "🏅 Current Level",
+                level_name
+            )
 
-            st.subheader("Focus Timer")
+    with c4:
+        with st.container(border=True):
+            st.metric(
+                "🎖️ Badges Earned",
+                f"{earned_badges}/8"
+            )
 
-            @st.fragment(run_every="1s")
-            def focus_timer():
+    # ---------------- LEVEL PROGRESS ----------------
 
-                # Study duration input
+    with st.container(border=True):
 
-                st.number_input(
-                    "Study time (minutes)",
-                    min_value=15,
-                    max_value=240,
-                    value=60,
-                    step=5,
-                    key="study_minutes",
-                    disabled=st.session_state.phase != "Not Started"
-                )
+        st.subheader(
+            f"Level Progress — {level_name}"
+        )
 
-                # Timer calculation
+        if next_level_xp is None:
 
-                if st.session_state.timer_running:
+            st.success(
+                "You've reached the highest level: Legend!"
+            )
 
-                    remaining = max(
-                        0,
-                        math.ceil(
-                            st.session_state.timer_end - time.time()
-                        )
-                    )
+        else:
 
-                    # When a study/break session finishes
+            st.progress(level_progress / 100)
 
-                    if remaining == 0:
+            st.caption(
+                f"{data['xp']} XP total · "
+                f"{xp_to_next} XP to the next level"
+            )
 
-                        if st.session_state.phase == "Study":
+    # ---------------- STUDY OVERVIEW ----------------
 
-                            st.session_state.study_remaining -= (
-                                st.session_state.phase_seconds
-                            )
+    st.subheader("📚 Study Overview")
 
-                            if st.session_state.study_remaining > 0:
+    a, b, c, d = st.columns(4)
 
-                                # Start 10-minute break
+    with a:
+        st.metric(
+            "Tasks completed today",
+            today_stats["tasks"]
+        )
 
-                                st.session_state.phase = "Break"
-                                st.session_state.phase_seconds = 10 * 60
+    with b:
+        st.metric(
+            "Focus sessions today",
+            today_stats["focus_sessions"]
+        )
 
-                                st.session_state.timer_end = (
-                                    time.time() + 10 * 60
-                                )
+    with c:
+        st.metric(
+            "Study time today",
+            f"{today_stats['study_minutes']} min"
+        )
 
-                            else:
+    with d:
+        st.metric(
+            "All-time tasks completed",
+            total_tasks_completed
+        )
 
-                                # All study time completed
+    # ---------------- XP ACTIVITY AND STREAK RECORD ----------------
 
-                                st.session_state.phase = "Completed"
-                                st.session_state.timer_running = False
+    a, b = st.columns(2, gap="large")
 
-                        elif st.session_state.phase == "Break":
+    with a:
 
-                            # Start next study session
+        with st.container(border=True):
+            st.subheader("⚡ XP Activity")
 
-                            st.session_state.phase = "Study"
+            xp_sources = data["xp_sources"]
 
-                            st.session_state.phase_seconds = min(
-                                st.session_state.study_remaining,
-                                45 * 60
-                            )
+            st.metric(
+                "From task priorities",
+                xp_sources["Task XP"]
+            )
 
-                            st.session_state.timer_end = (
-                                time.time()
-                                + st.session_state.phase_seconds
-                            )
+            st.metric(
+                "From daily bonuses",
+                xp_sources["Daily bonuses"]
+            )
 
-                    else:
+            st.metric(
+                "From focus sessions",
+                xp_sources["Focus sessions"]
+            )
 
-                        st.session_state.timer_remaining = remaining
+            st.caption(
+                "Task XP: Low +5 · Moderate +10 · High +20"
+            )
+
+            st.caption(
+                "Bonuses: all tasks +20 · "
+                "5 tasks in a day +15 · focus session +10"
+            )
+
+    with b:
+
+        with st.container(border=True):
+            st.subheader("🏆 Streak Record")
+
+            st.metric(
+                "Best streak",
+                f"{best_streak} days"
+            )
+
+            st.write("A productive day means either:")
+
+            st.write(
+                "- At least 3 tasks completed, or"
+            )
+
+            st.write(
+                "- At least 1 completed Focus Timer session"
+            )
+
+    # ---------------- ACHIEVEMENTS ----------------
+
+    with st.container(border=True):
+
+        st.subheader("🎖️ Achievements & Badges")
+
+        badge_columns = st.columns(4)
+
+        for index, (
+                badge_name,
+                earned,
+                requirement
+        ) in enumerate(get_badges()):
+
+            with badge_columns[index % 4]:
+
+                if earned:
+
+                    st.success(badge_name)
+                    st.caption("Unlocked!")
 
                 else:
 
-                    remaining = st.session_state.timer_remaining
+                    st.info(f"🔒 {badge_name}")
+                    st.caption(requirement)
 
-                # ---------------- CIRCULAR TIMER ----------------
 
-                if st.session_state.phase == "Not Started":
-
-                    percentage = 0
-                    display_time = "00:00"
-                    label = "Ready to Focus"
-
-                elif st.session_state.phase == "Completed":
-
-                    percentage = 100
-                    display_time = "00:00"
-                    label = "Completed"
-
-                else:
-
-                    percentage = (
-                        1 - remaining / st.session_state.phase_seconds
-                    ) * 100
-
-                    minutes = remaining // 60
-                    seconds = remaining % 60
-
-                    display_time = f"{minutes:02d}:{seconds:02d}"
-
-                    if st.session_state.phase == "Study":
-                        label = "Focus Time"
-                    else:
-                        label = "Break Time"
-
-                # Blue circular ring
-
-                st.html(f"""
-                    <div style="
-                        display:flex;
-                        justify-content:center;
-                        align-items:center;
-                        position:relative;
-                        height:190px;
-                        margin:15px 0;
-                    ">
-
-                        <div style="
-                            width:170px;
-                            height:170px;
-                            border-radius:50%;
-
-                            background:conic-gradient(
-                                from -90deg,
-                                #bfdbfe 0%,
-                                #60a5fa {percentage * 0.5}%,
-                                #2563eb {percentage}%,
-                                #e5e7eb {percentage}% 100%
-                            );
-
-                            -webkit-mask:radial-gradient(
-                                farthest-side,
-                                transparent 84%,
-                                black 85%
-                            );
-
-                            mask:radial-gradient(
-                                farthest-side,
-                                transparent 84%,
-                                black 85%
-                            );
-                        "></div>
-
-                        <div style="
-                            position:absolute;
-                            display:flex;
-                            flex-direction:column;
-                            align-items:center;
-                            justify-content:center;
-                            pointer-events:none;
-                        ">
-
-                            <span style="
-                                font-size:30px;
-                                font-weight:bold;
-                                color:#2563eb;
-                            ">{display_time}</span>
-
-                            <span style="
-                                font-size:13px;
-                                color:#64748b;
-                            ">{label}</span>
-
-                        </div>
-
-                    </div>
-                """)
-
-                # ---------------- TIMER BUTTONS ----------------
-
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
-
-                    if st.session_state.phase in [
-                        "Not Started", "Completed"
-                    ]:
-
-                        st.button(
-                            "▶ Start",
-                            on_click=start_timer,
-                            use_container_width=True
-                        )
-
-                with col2:
-
-                    if st.session_state.timer_running:
-
-                        st.button(
-                            "⏸ Pause",
-                            on_click=pause_timer,
-                            use_container_width=True
-                        )
-
-                    elif st.session_state.phase not in [
-                        "Not Started", "Completed"
-                    ]:
-
-                        st.button(
-                            "▶ Resume",
-                            on_click=resume_timer,
-                            use_container_width=True
-                        )
-
-                with col3:
-
-                    st.button(
-                        "↻ Reset",
-                        on_click=reset_timer,
-                        use_container_width=True
-                    )
-
-            focus_timer()
