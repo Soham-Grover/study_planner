@@ -259,4 +259,6 @@ with right:
             with col3:
                 st.button("↻ Reset", on_click=reset_timer, use_container_width=True)
 
+            st.caption("45 min Focus • 10 min Break • Repeat & Stay Focused ✨")
+
         focus_timer()

@@ -400,28 +400,34 @@ with t0:
 
     with c1:
         with st.container(border=True):
-            st.metric("⭐ Total XP", data["xp"])
+            st.metric(
+                "⭐ Total XP", data["xp"],
+                help="Total Experience Points earned by completing tasks.")
 
     with c2:
         with st.container(border=True):
             st.metric(
                 "🔥 Current Streak",
-                f"{current_streak} days"
+                f"{current_streak} days",
+                help="The number of consecutive days you have maintained your productivity streak."
             )
 
     with c3:
         with st.container(border=True):
             st.metric(
                 "🏅 Current Level",
-                level_name
+                level_name,
+                help="Your current level based on the XP you have earned."
             )
 
     with c4:
         with st.container(border=True):
             st.metric(
                 "🎖️ Badges Earned",
-                f"{earned_badges}/8"
+                f"{earned_badges}/8",
+                help="The number of achievement badges you have unlocked so far."
             )
+
 
     # ---------------- LEVEL PROGRESS ----------------
 
