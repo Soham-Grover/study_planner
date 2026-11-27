@@ -33,6 +33,8 @@ pages = [
     st.Page("pages/daily_dashboard.py", title="Dashboard", icon="📊"),
     st.Page("pages/daily_planner.py", title="Daily Planner", icon="📝"),
     st.Page("pages/exam_portal.py", title="AI Exam Portal", icon="🎓"),
+    st.Page("pages/profile.py", title="My Profile", icon="👤"),
+    st.Page("pages/about.py", title="About Stride", icon="ℹ️")
 ]
 
 pg = st.navigation(pages)

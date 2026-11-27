@@ -8,7 +8,7 @@ from datetime import date
 import time
 import json
 import pydantic
-from database import save_exam_plan, get_exam_plan
+from database import save_exam_plan, get_exam_plan, delete_plan
 
 from database import save_exam_plan
 
@@ -105,6 +105,7 @@ if not st.session_state["plan_generated"]:
             st.write("Fetching Syllabus.....")
             time.sleep(2)
             st.write("Fetching Datesheet...")
+            st.toast("Plan Generated Successfully !!!!")
 
         st.session_state["day_wise_plan"] = day_wise_plan.model_dump()
         save_exam_plan(
@@ -146,6 +147,13 @@ else:
                         st.write(f"**{task["subject"]}**")
                         st.caption(f"📖 {task["chapter"]}")
                         st.write(task["task_description"])
+
+        regenerate_plan_button = st.button("Regenerate Plan")
+
+        if regenerate_plan_button:
+            delete_plan(user_id)
+            st.session_state["plan_generated"] = False
+            st.session_state["day_wise_plan"] = None
 
 
     with metrics:

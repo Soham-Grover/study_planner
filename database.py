@@ -1,6 +1,7 @@
 import sqlite3
 import hashlib
 import json
+from datetime import datetime, date
 
 def get_connection():
     conn = sqlite3.connect("study_planner.db")
@@ -162,6 +163,12 @@ def get_student_profile(user_id):
         }
     return None
 
+def get_email(userid):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT email FROM users WHERE user_id = ?", (userid,))
+    row = cursor.fetchone()
+    return row[0]
 
 def save_exam_plan(user_id, subject_list, chapter_list, exam_dates, exam_dates_subjects, day_wise_plan):
     conn = get_connection()
@@ -247,11 +254,53 @@ def update_xp_tasks_table():
 def get_xp(userid):
     conn = get_connection()
     cursor = conn.cursor()
-    xp = cursor.execute("SELECT xp from users WHERE user_id = ?", userid)
-    conn.commit()
+    cursor.execute("SELECT COALESCE(xp, 0) FROM users WHERE user_id = ?", (userid,))
+    row = cursor.fetchone()
     conn.close()
 
-    return xp
+    return row[0] if row else 0
+
+def get_task_stats(userid):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            COUNT(*) AS total_tasks,
+            COALESCE(SUM(CASE WHEN is_done = 1 THEN 1 ELSE 0 END), 0) AS completed_tasks
+        FROM tasks
+        WHERE user_id = ?
+    """, (userid,))
+    total_tasks, completed_tasks = cursor.fetchone()
+    conn.close()
+    return total_tasks, completed_tasks
+
+
+def get_today_tasks(userid):
+    conn = get_connection()
+    cursor = conn.cursor()
+    today_str = date.today().isoformat()
+
+    cursor.execute("""
+        SELECT
+            COUNT(*) AS today_tasks,
+            COALESCE(SUM(CASE WHEN is_done = 1 THEN 1 ELSE 0 END), 0) AS today_completed_tasks
+        FROM tasks
+        WHERE user_id = ? AND due_date = ?
+    """, (userid, today_str))
+
+    today_tasks, today_completed_tasks = cursor.fetchone()
+    conn.close()
+    return today_tasks, today_completed_tasks
+
+def delete_plan(userid):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""DELETE FROM exam_plans WHERE user_id = ?""", (userid,))
+
+def change_user_info(userid, password, email, subjects, grade, board):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("")
 
 
 if __name__ == "__main__":

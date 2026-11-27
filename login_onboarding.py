@@ -1,6 +1,6 @@
 import sqlite3
 import streamlit as st
-from database import add_user, user_auth, add_student_profile, get_student_profile
+from database import add_user, user_auth, add_student_profile, get_student_profile, get_email
 
 
 def logout():
@@ -27,6 +27,7 @@ def login_onboarding():
             "onboarding": False,
             "user_id": None,
             "username": "",
+            "password": "",
             "email": "",
             "grade": 5,
             "board": "CBSE",
@@ -62,7 +63,7 @@ def login_onboarding():
                     "Computer Science", "Applied Math", "Commercial Arts",
                     "Economics", "History", "Geography", "Entrepreneurship",
                     "English", "French", "Sanskrit",
-                ],
+                ], accept_new_options=True
             )
         else:
             subjects = st.multiselect(
@@ -118,11 +119,14 @@ def login_onboarding():
 
                 if submitted:
                     logged_in_userid = user_auth(username.strip(), password)
+                    logged_in_email = get_email(logged_in_userid)
                     if logged_in_userid:
                         profile = get_student_profile(logged_in_userid)
                         st.session_state.user["logged_in"] = True
                         st.session_state.user["username"] = username.strip()
                         st.session_state.user["user_id"] = logged_in_userid
+                        st.session_state.user["email"] = logged_in_email
+                        st.session_state.user["password"] = password
 
                         if profile:
                             st.session_state.user["grade"] = profile["grade"]

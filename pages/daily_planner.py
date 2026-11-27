@@ -1,7 +1,6 @@
 import streamlit as st
 import time
 import math
-import json
 from pathlib import Path
 from datetime import date
 from database import get_quests, update_quest, delete_quest, add_quest
@@ -20,18 +19,22 @@ for quest in db_tasks:
     st.session_state.task_ids.append(tid)
     st.session_state[f"name_{tid}"] = name
     st.session_state[f"priority_{tid}"] = priority if priority in ["Low", "Moderate", "High"] else "Moderate"
-    st.session_state[f"due_{tid}"] = due or ""
+    try:
+        st.session_state[f"due_{tid}"] = date.fromisoformat(str(due))
+    except (ValueError, TypeError):
+        st.session_state[f"due_{tid}"] = date.today()
     st.session_state[f"done_{tid}"] = bool(is_done)
 
 
 def add_task():
     task = st.session_state.get("new_task", "").strip()
     if task:
-        new_tid = add_quest(user_id, task, "Moderate", "", 0)
+        today_str = date.today().isoformat()
+        new_tid = add_quest(user_id, task, "Moderate", today_str, 0)
         st.session_state.task_ids.append(new_tid)
         st.session_state[f"name_{new_tid}"] = task
         st.session_state[f"priority_{new_tid}"] = "Moderate"
-        st.session_state[f"due_{new_tid}"] = ""
+        st.session_state[f"due_{new_tid}"] = date.today()
         st.session_state[f"done_{new_tid}"] = False
         st.session_state.new_task = ""
 
@@ -49,10 +52,8 @@ def sync_task(tid):
     is_done = st.session_state.get(f"done_{tid}", False)
     priority = st.session_state.get(f"priority_{tid}")
     due = st.session_state.get(f"due_{tid}")
-    update_quest(tid, name, priority, due, 1 if is_done else 0)
-
-    if is_done:
-        award_task_xp(tid)
+    due_str = due.isoformat() if isinstance(due, date) else str(due or "")
+    update_quest(tid, name, priority, due_str, 1 if is_done else 0)
 
 
 def start_timer():
@@ -124,10 +125,10 @@ with left:
                     args=(i,),
                 )
             with col3:
-                st.text_input(
+                st.date_input(
                     "Due",
+                    format="YYYY-MM-DD",
                     key=f"due_{i}",
-                    placeholder="Due date",
                     label_visibility="collapsed",
                     on_change=sync_task,
                     args=(i,),
@@ -136,11 +137,6 @@ with left:
                 st.checkbox("Done", key=f"done_{i}", label_visibility="collapsed", on_change=sync_task, args=(i,))
             with col5:
                 st.button("🗑️", key=f"delete_{i}", on_click=delete_task, args=(i,))
-
-        if st.session_state.task_ids and all(
-            st.session_state.get(f"done_{tid}", False) for tid in st.session_state.task_ids
-        ):
-            award_all_tasks_bonus()
 
 with right:
     with st.container(border=True):
@@ -183,8 +179,6 @@ with right:
             st.balloons()
 
     # ---------------- FOCUS TIMER ----------------
-    #_, right_timer = st.columns([7, 3], gap="large")
-    #with right_timer:
     with st.container(border=True):
         st.subheader("Focus Timer")
 
@@ -210,7 +204,6 @@ with right:
                             st.session_state.phase_seconds = 10 * 60
                             st.session_state.timer_end = time.time() + 10 * 60
                         else:
-                            record_focus_session()
                             st.session_state.phase = "Completed"
                             st.session_state.timer_running = False
                     elif st.session_state.phase == "Break":
